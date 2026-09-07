@@ -283,9 +283,77 @@ class TestWeChatSlim(unittest.TestCase):
                 self.assertIn('account', data)
                 self.assertIn('categories', data)
                 self.assertIn('db', data['categories'])
+        finally:
+            try:
+                server.shutdown()
+                server.server_close()
+            except Exception:
+                pass
+            shutil.rmtree(test_dir, ignore_errors=True)
 
-            server.shutdown()
-            server.server_close()
+    def test_cli_tag_command_and_whitelist_clean_protection(self):
+        """测试 tag 命令行管理与 clean 阶段白名单绝对防删机制."""
+        import subprocess
+
+        test_dir = Path(tempfile.mkdtemp())
+        wl_config = test_dir / "custom_whitelist.json"
+        archive_dir = test_dir / "archive"
+        try:
+            script_path = str(Path(__file__).resolve().parents[3] / 'wechat_slim.py')
+
+            # 1. 测试 tag --add
+            res_add = subprocess.run(
+                [sys.executable, script_path, 'tag', '--add', '老婆', '--wxid', 'wxid_wife', '--protect', 'absolute', '--keywords', '结婚,宝宝', '--whitelist-config', str(wl_config)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_add.returncode, 0)
+            self.assertIn('成功添加白名单保护规则', res_add.stdout)
+
+            # 2. 测试 tag --list
+            res_list = subprocess.run(
+                [sys.executable, script_path, 'tag', '--list', '--whitelist-config', str(wl_config)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_list.returncode, 0)
+            self.assertIn('老婆', res_list.stdout)
+            self.assertIn('wxid_wife', res_list.stdout)
+
+            # 3. 创建测试文件: 一个命中白名单 (结婚照片.pdf)，一个普通可删 (广告.pdf)
+            file_dir = test_dir / 'msg/file'
+            file_dir.mkdir(parents=True)
+            protected_file = file_dir / '结婚典礼纪念.pdf'
+            disposable_file = file_dir / '垃圾推销广告.pdf'
+            protected_file.write_bytes(b'MEMORIES_OF_FAMILY' * 100)
+            disposable_file.write_bytes(b'JUNK_ADVERTISEMENT' * 100)
+
+            # 4. 测试 clean --dry-run 查看白名单防护日志
+            res_dry = subprocess.run(
+                [sys.executable, script_path, 'clean', '--path', str(test_dir), '--types', 'file', '--days', '0', '--dry-run', '--whitelist-config', str(wl_config)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_dry.returncode, 0)
+            self.assertIn('白名单保护: 已自动跳过并锁定保护 1 个核心联系人文件', res_dry.stdout)
+
+            # 5. 测试 clean --archive-to 实际执行
+            res_clean = subprocess.run(
+                [sys.executable, script_path, 'clean', '--path', str(test_dir), '--types', 'file', '--days', '0', '--archive-to', str(archive_dir), '-f', '--whitelist-config', str(wl_config)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_clean.returncode, 0)
+            self.assertIn('白名单防删: 严格保护了 1 个核心联系人文件未被触碰', res_clean.stdout)
+
+            # 核心断言: 受保护文件必须完好留在原处！
+            self.assertTrue(protected_file.exists())
+            self.assertEqual(protected_file.read_bytes(), b'MEMORIES_OF_FAMILY' * 100)
+
+            # 普通文件已被安全归档转移
+            self.assertFalse(disposable_file.exists())
+            self.assertTrue((archive_dir / 'msg/file/垃圾推销广告.pdf').exists())
+
         finally:
             shutil.rmtree(test_dir, ignore_errors=True)
 

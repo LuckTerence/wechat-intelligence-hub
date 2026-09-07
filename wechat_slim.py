@@ -21,9 +21,19 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple, Set, Union
 import urllib.parse
 import webbrowser
+
+# 引入核心人脉白名单管理器 (Phase 2 核心杀手锏)
+try:
+    from wechat_intelligence_hub.engine.whitelist import WhiteListManager, WhiteListRule
+except ImportError:
+    try:
+        from engine.whitelist import WhiteListManager, WhiteListRule
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent / 'projects' / 'wechat-intelligence-hub'))
+        from engine.whitelist import WhiteListManager, WhiteListRule
 
 
 def format_bytes(size: float) -> str:
@@ -235,6 +245,18 @@ def move_to_trash(file_path: Path) -> bool:
         return False
 
 
+@dataclass
+class SlimResult:
+    """瘦身执行统计结果 (支持解构赋值 (freed_count, freed_bytes) 保持向下兼容)."""
+    freed_count: int
+    freed_bytes: int
+    protected_count: int = 0
+    protected_bytes: int = 0
+
+    def __iter__(self):
+        return iter((self.freed_count, self.freed_bytes))
+
+
 def execute_slimming(
     acc: AccountProfile,
     categories: Dict[str, ScanCategory],
@@ -243,16 +265,19 @@ def execute_slimming(
     selected_types: List[str],
     dry_run: bool = False,
     archive_to: Optional[Path] = None,
-) -> Tuple[int, int]:
-    """执行瘦身与清理操作.
+    whitelist_mgr: Optional[WhiteListManager] = None,
+) -> SlimResult:
+    """执行瘦身与清理操作 (集成核心人脉防删白名单检查).
     
-    返回: (清理文件数, 释放字节数)
+    返回: SlimResult (可解构为 (清理文件数, 释放字节数))
     """
     cutoff_time = datetime.now() - timedelta(days=days) if days > 0 else datetime.now() + timedelta(days=99999)
     cutoff_ts = cutoff_time.timestamp()
 
     freed_bytes = 0
     freed_count = 0
+    protected_bytes = 0
+    protected_count = 0
 
     if archive_to:
         archive_to = archive_to.resolve()
@@ -265,7 +290,7 @@ def execute_slimming(
             continue
 
         for fp, size, mtime in cat.files:
-            # 绝对安全护栏：绝不处理数据库文件
+            # 绝对安全护栏 1：绝不处理数据库文件
             if fp.suffix in ['.db', '.db-wal', '.db-shm', '.sqlite', '.wcdb'] or 'db_storage' in fp.parts:
                 continue
 
@@ -276,6 +301,14 @@ def execute_slimming(
             # 过滤条件 2: 时间跨度 (mtime 必须早于截断时间)
             if days > 0 and mtime > cutoff_ts:
                 continue
+
+            # 绝对安全护栏 2 (Phase 2): 核心人脉防删白名单检查
+            if whitelist_mgr:
+                is_prot, _ = whitelist_mgr.is_protected(fp, mtime)
+                if is_prot:
+                    protected_count += 1
+                    protected_bytes += size
+                    continue
 
             # 命中待处理文件
             freed_count += 1
@@ -297,7 +330,7 @@ def execute_slimming(
                 # 默认安全清理：移至 macOS 废纸篓
                 move_to_trash(fp)
 
-    return freed_count, freed_bytes
+    return SlimResult(freed_count, freed_bytes, protected_count, protected_bytes)
 
 
 @dataclass
@@ -542,14 +575,74 @@ def cmd_dedup(args: argparse.Namespace) -> None:
         print('    提示: 已转换为 APFS 硬链接，微信中所有聊天窗口里的文件依然可原样点击打开！')
 
 
+def cmd_tag(args: argparse.Namespace) -> None:
+    """核心人脉与重要会话防删白名单管理."""
+    wl_mgr = WhiteListManager(getattr(args, 'whitelist_config', None))
+
+    if getattr(args, 'add', None):
+        name = args.add
+        wxid = getattr(args, 'wxid', None)
+        if not wxid:
+            print("[-] 添加失败: 请提供 --wxid 参数 (例如: --add \"老婆\" --wxid wxid_xxx)")
+            return
+        protect = getattr(args, 'protect', 'absolute') or 'absolute'
+        keywords = [k.strip() for k in args.keywords.split(',')] if getattr(args, 'keywords', None) else []
+        retain_days = getattr(args, 'retain_days', 0) or 0
+        rule = wl_mgr.add(name, wxid, protect=protect, keywords=keywords, retain_days=retain_days)
+        print(f"[✓] 成功添加白名单保护规则: {rule.name} (ID: {rule.wxid})")
+        print(f"    保护级别: {'绝对保护 (永不删除)' if rule.protect == 'absolute' else f'保留 {rule.retain_days} 天内文件'}")
+        if rule.keywords:
+            print(f"    包含关键词: {', '.join(rule.keywords)}")
+        return
+
+    if getattr(args, 'remove', None):
+        ok = wl_mgr.remove(args.remove)
+        if ok:
+            print(f"[✓] 成功移除白名单保护规则: {args.remove}")
+        else:
+            print(f"[-] 未找到匹配的白名单规则: {args.remove}")
+        return
+
+    if getattr(args, 'clear', False):
+        wl_mgr.clear()
+        print("[✓] 已清空白名单所有保护规则。")
+        return
+
+    # 默认展示所有规则列表
+    rules = wl_mgr.list_rules()
+    print("=" * 66)
+    print("       WeChat Slim - 核心人脉与重要会话防删白名单")
+    print("=" * 66)
+    if not rules:
+        print("  当前暂无白名单规则。")
+        print("  提示: 使用以下命令添加核心保护人脉，防止重要文件被误删:")
+        print("    python3 wechat_slim.py tag --add \"老婆\" --wxid wxid_xxx --protect absolute")
+        print("    python3 wechat_slim.py tag --add \"重要客户\" --wxid xxx@chatroom --keywords \"合同,签约\"")
+        print("=" * 66)
+        return
+
+    print(f"  当前共生效 {len(rules)} 条白名单保护规则:\n")
+    for idx, r in enumerate(rules, 1):
+        prot_str = "🔒 绝对保护 (永不删除)" if r.protect == "absolute" else f"⏱️ 保留 {r.retain_days} 天"
+        kw_str = f" | 关键词: {', '.join(r.keywords)}" if r.keywords else ""
+        print(f"  {idx}. [{r.name}]")
+        print(f"     微信ID/群ID: {r.wxid}")
+        print(f"     保护级别   : {prot_str}{kw_str}")
+        print(f"     创建时间   : {r.created_at[:19].replace('T', ' ')}")
+    print("=" * 66)
+
+
 def cmd_scan(args: argparse.Namespace) -> None:
-    """执行扫描并展示存储透视概览."""
+    """执行扫描并展示存储透视概览 (包含白名单防删统计)."""
     custom_path = getattr(args, 'path', None)
     accounts = discover_accounts(custom_path)
     if not accounts:
         print('[-] 未在指定或默认微信容器中发现微信数据目录。')
         print('    提示: 请确认微信是否安装，或是否有登录过的账号。')
         return
+
+    wl_mgr = WhiteListManager(getattr(args, 'whitelist_config', None))
+    active_rules = wl_mgr.list_rules()
 
     print('=' * 66)
     print('       WeChat Slim - 微信智能存储透视器')
@@ -575,6 +668,26 @@ def cmd_scan(args: argparse.Namespace) -> None:
         clean_ratio = (cleanable_size / total_account_size * 100) if total_account_size > 0 else 0
         print(f'  总空间占用   : {format_bytes(total_account_size)}')
         print(f'  可瘦身潜力   : {format_bytes(cleanable_size)} ({clean_ratio:.1f}% 的空间可被安全瘦身/转存)')
+
+        # 白名单保护统计
+        if active_rules:
+            wl_count = 0
+            wl_bytes = 0
+            for c in categories.values():
+                if c.is_protected:
+                    continue
+                for fp, sz, mt in c.files:
+                    is_p, _ = wl_mgr.is_protected(fp, mt)
+                    if is_p:
+                        wl_count += 1
+                        wl_bytes += sz
+            names = ", ".join(r.name for r in active_rules[:3])
+            if len(active_rules) > 3:
+                names += f" 等 {len(active_rules)} 条"
+            print('-' * 66)
+            print(f"  🛡️ 核心人脉白名单保护:")
+            print(f"  • 活跃白名单规则 : {len(active_rules)} 条 ({names})")
+            print(f"  • 已锁定保护文件 : {wl_count:,} 个文件 ({format_bytes(wl_bytes)} 空间受白名单绝对保护，绝不误删)")
     print()
 
 
@@ -591,6 +704,7 @@ def cmd_clean(args: argparse.Namespace) -> None:
     types = [t.strip() for t in args.types.split(',') if t.strip()]
     min_size_bytes = parse_size_str(args.min_size)
     archive_dir = Path(args.archive_to) if args.archive_to else None
+    wl_mgr = WhiteListManager(getattr(args, 'whitelist_config', None))
 
     action_name = f'无损转存归档至 [{archive_dir}]' if archive_dir else '安全移入系统废纸篓 (Trash)'
 
@@ -606,28 +720,32 @@ def cmd_clean(args: argparse.Namespace) -> None:
         print('  • 模拟运行   : [演练模式 Dry-Run - 不实际移动或删除任何文件]')
     print('-' * 66)
 
-    pre_count, pre_bytes = execute_slimming(
-        acc, categories, args.days, min_size_bytes, types, dry_run=True, archive_to=archive_dir
+    pre_res = execute_slimming(
+        acc, categories, args.days, min_size_bytes, types, dry_run=True, archive_to=archive_dir, whitelist_mgr=wl_mgr
     )
 
-    print(f'  预估影响     : 共计 {pre_count:,} 个文件，可释放 {format_bytes(pre_bytes)} 空间')
+    print(f'  预估影响     : 共计 {pre_res.freed_count:,} 个文件，可释放 {format_bytes(pre_res.freed_bytes)} 空间')
+    if pre_res.protected_count > 0:
+        print(f'  🛡️ 白名单保护: 已自动跳过并锁定保护 {pre_res.protected_count:,} 个核心联系人文件 ({format_bytes(pre_res.protected_bytes)} 空间)')
 
-    if pre_count == 0:
+    if pre_res.freed_count == 0:
         print('\n[✓] 没有符合当前过滤条件的文件，无需清理。')
         return
 
     if not args.force and not args.dry_run:
-        confirm = input(f'\n确认要对这 {pre_count:,} 个文件执行 {action_name} 吗? [y/N]: ').strip().lower()
+        confirm = input(f'\n确认要对这 {pre_res.freed_count:,} 个文件执行 {action_name} 吗? [y/N]: ').strip().lower()
         if confirm != 'y':
             print('[x] 操作已取消。')
             return
 
     if not args.dry_run:
         print('\n正在处理中，请稍候...')
-        actual_count, actual_bytes = execute_slimming(
-            acc, categories, args.days, min_size_bytes, types, dry_run=False, archive_to=archive_dir
+        act_res = execute_slimming(
+            acc, categories, args.days, min_size_bytes, types, dry_run=False, archive_to=archive_dir, whitelist_mgr=wl_mgr
         )
-        print(f'[✓] 处理完成！成功释放 {format_bytes(actual_bytes)} 空间（处理了 {actual_count:,} 个文件）。')
+        print(f'[✓] 处理完成！成功释放 {format_bytes(act_res.freed_bytes)} 空间（处理了 {act_res.freed_count:,} 个文件）。')
+        if act_res.protected_count > 0:
+            print(f'    🛡️ 白名单防删: 严格保护了 {act_res.protected_count:,} 个核心联系人文件未被触碰。')
         if not archive_dir:
             print('    提示: 文件已被安全放入废纸篓。如需彻底释放磁盘空间，请清空废纸篓。')
         else:
@@ -1112,12 +1230,13 @@ def interactive_wizard() -> None:
     print('  [1] 快速瘦身 (推荐: 清理 90 天前且 >10MB 的视频/文件，移入废纸篓)')
     print('  [2] 极限瘦身 (清理所有 30 天前的缓存、视频与下载文件)')
     print('  [3] 仅清理临时缓存 (仅清理 cache/temp，绝不触碰任何聊天文件)')
-    print('  [4] 存储空间详细扫描 (查看各分类占用)')
+    print('  [4] 存储空间详细扫描 (查看各分类占用与白名单保护统计)')
     print('  [5] 智能查重去重 (多群重复转发秒级查重，转换为 APFS 硬链接释放空间)')
     print('  [6] 启动网页大盘 (启动本地现代化 WebUI 并在浏览器中查看)')
+    print('  [7] 核心人脉白名单管理 (查看或添加家人、老板、重要客户防删名单)')
     print('  [q] 退出')
 
-    choice = input('\n请输入选项 [1-6/q]: ').strip().lower()
+    choice = input('\n请输入选项 [1-7/q]: ').strip().lower()
     if choice == '1':
         args = argparse.Namespace(
             types='video,file',
@@ -1162,6 +1281,8 @@ def interactive_wizard() -> None:
         cmd_dedup(args)
     elif choice == '6':
         cmd_web(argparse.Namespace(port=8080, path=None, no_browser=False))
+    elif choice == '7':
+        cmd_tag(argparse.Namespace(add=None, remove=None, clear=False, list=True))
     else:
         print('已退出。')
 
@@ -1175,6 +1296,7 @@ def main() -> None:
 
     scan_p = subparsers.add_parser('scan', help='扫描并展示微信存储空间深度分布')
     scan_p.add_argument('--path', default=None, help='指定自定义微信存储目录 (默认: 自动发现系统微信目录)')
+    scan_p.add_argument('--whitelist-config', default=None, help=argparse.SUPPRESS)
 
     clean_p = subparsers.add_parser('clean', help='执行文件瘦身或外置归档')
     clean_p.add_argument('--path', default=None, help='指定自定义微信存储目录 (默认: 自动发现系统微信目录)')
@@ -1184,6 +1306,7 @@ def main() -> None:
     clean_p.add_argument('--dry-run', action='store_true', help='模拟预演，只统计不实际移动任何文件')
     clean_p.add_argument('--archive-to', default=None, help='指定外置移动硬盘或备份目录 (将文件安全移动至该目录，而非废纸篓)')
     clean_p.add_argument('-f', '--force', action='store_true', help='跳过确认提示直接执行')
+    clean_p.add_argument('--whitelist-config', default=None, help=argparse.SUPPRESS)
 
     dedup_p = subparsers.add_parser('dedup', help='多群转发重复文件智能查重与去重 (Phase 2)')
     dedup_p.add_argument('--path', default=None, help='指定自定义微信存储目录 (默认: 自动发现系统微信目录)')
@@ -1198,6 +1321,17 @@ def main() -> None:
     web_p.add_argument('--path', default=None, help='指定自定义微信存储目录 (默认: 自动发现系统微信目录)')
     web_p.add_argument('--no-browser', action='store_true', help='不自动打开默认浏览器')
 
+    tag_p = subparsers.add_parser('tag', help='核心人脉与重要会话防删白名单管理')
+    tag_p.add_argument('--add', default=None, metavar='NAME', help='受保护人脉/群名称 (如: "老婆", "重要客户")')
+    tag_p.add_argument('--wxid', default=None, help='联系人微信号/wxid/群ID (如: "wxid_xxx", "xxx@chatroom")')
+    tag_p.add_argument('--protect', choices=['absolute', 'retain_days'], default='absolute', help='保护级别: absolute (绝对保护永不删) 或 retain_days (保留N天内文件)')
+    tag_p.add_argument('--keywords', default=None, help='保护文件名关键词，逗号分隔 (如: "合同,宝宝,结婚")')
+    tag_p.add_argument('--retain-days', type=int, default=0, help='保留天数 (配合 --protect retain_days 使用)')
+    tag_p.add_argument('--remove', default=None, metavar='NAME_OR_WXID', help='移除指定的白名单规则')
+    tag_p.add_argument('--list', action='store_true', help='列出所有当前生效的白名单规则')
+    tag_p.add_argument('--clear', action='store_true', help='清空所有白名单规则')
+    tag_p.add_argument('--whitelist-config', default=None, help=argparse.SUPPRESS)
+
     args = parser.parse_args()
 
     if args.subcommand == 'scan':
@@ -1208,6 +1342,8 @@ def main() -> None:
         cmd_dedup(args)
     elif args.subcommand == 'web':
         cmd_web(args)
+    elif args.subcommand == 'tag':
+        cmd_tag(args)
     else:
         interactive_wizard()
 
