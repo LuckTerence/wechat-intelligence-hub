@@ -1027,6 +1027,8 @@ WEB_UI_HTML = """<!DOCTYPE html>
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('slim')">🚀 智能安全瘦身</button>
             <button class="tab-btn" onclick="switchTab('dedup')">🔗 多群查重 (APFS硬链接)</button>
+            <button class="tab-btn" onclick="switchTab('whitelist')">🛡️ 核心人脉防删白名单</button>
+            <button class="tab-btn" onclick="switchTab('history')">📊 历史累计与审计</button>
             <button class="tab-btn" onclick="switchTab('details')">📋 存储明细</button>
         </div>
 
@@ -1100,6 +1102,99 @@ WEB_UI_HTML = """<!DOCTYPE html>
             <div id="dedupResults" style="margin-top: 16px;"></div>
         </div>
 
+        <!-- 白名单 Tab -->
+        <div id="tab-whitelist" class="tab-content">
+            <p style="font-size: 13px; color: var(--text-sub); margin-bottom: 16px;">
+                加入白名单的核心人脉（家人、老板、重要客户）与其聊天中的文件、视频在任何清理动作中都将受到<b>绝对隔离保护</b>，系统会自动识别并跳过，绝不误删。
+            </p>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>人脉/群备注名</label>
+                    <input type="text" id="wlName" placeholder="例如: 老婆、公司财务群、核心客户A">
+                </div>
+                <div class="form-group">
+                    <label>微信ID / 群ID (wxid)</label>
+                    <input type="text" id="wlWxid" placeholder="例如: wxid_xxx 或 xxx@chatroom">
+                </div>
+                <div class="form-group">
+                    <label>保护级别</label>
+                    <select id="wlProtect">
+                        <option value="absolute" selected>绝对保护 (永不删除)</option>
+                        <option value="retain_days">保留指定天数内文件</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>保护文件名关键词 (可选，逗号分隔)</label>
+                    <input type="text" id="wlKeywords" placeholder="例如: 合同,发票,签约,宝宝照片">
+                </div>
+                <div class="form-group">
+                    <label>保留天数 (配合保留天数选项)</label>
+                    <input type="number" id="wlRetainDays" value="365" placeholder="默认: 365 天">
+                </div>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="addWhitelistRule()">➕ 添加防删白名单保护</button>
+                <button class="btn btn-secondary" onclick="loadWhitelist()">🔄 刷新列表</button>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">已生效的防删白名单规则</div>
+                <table>
+                    <thead>
+                        <tr><th>保护对象</th><th>微信ID / 群ID</th><th>保护级别</th><th>指定关键词</th><th>创建时间</th><th>操作</th></tr>
+                    </thead>
+                    <tbody id="whitelistBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 历史与审计 Tab -->
+        <div id="tab-history" class="tab-content">
+            <p style="font-size: 13px; color: var(--text-sub); margin-bottom: 16px;">
+                系统全生命周期运行指标与本地审计跟踪。每次清理、查重与外置归档均受严密记录。
+            </p>
+            <div class="grid-stats" style="margin-bottom: 16px;">
+                <div class="card" style="padding: 14px;">
+                    <div class="stat-label">累计运行次数</div>
+                    <div class="stat-val" id="histRuns">--</div>
+                    <div class="stat-desc" id="histScansCleans">--</div>
+                </div>
+                <div class="card" style="padding: 14px;">
+                    <div class="stat-label">累计释放空间</div>
+                    <div class="stat-val" style="color: var(--success);" id="histFreed">--</div>
+                    <div class="stat-desc">SSD 磁盘真实释放</div>
+                </div>
+                <div class="card" style="padding: 14px;">
+                    <div class="stat-label">白名单锁定保护</div>
+                    <div class="stat-val" style="color: var(--primary);" id="histProtected">--</div>
+                    <div class="stat-desc">严格守护跳过的文件空间</div>
+                </div>
+                <div class="card" style="padding: 14px;">
+                    <div class="stat-label">NPS 推荐度评分</div>
+                    <div class="stat-val" style="color: var(--warning);" id="histNps">--</div>
+                    <div class="stat-desc">用户满意度</div>
+                </div>
+            </div>
+
+            <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">最近操作历史明细</div>
+            <table>
+                <thead>
+                    <tr><th>时间</th><th>操作类型</th><th>影响文件数</th><th>释放空间</th><th>保护空间</th><th>备注</th></tr>
+                </thead>
+                <tbody id="historyBody"></tbody>
+            </table>
+
+            <div style="margin-top: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <div style="font-size: 14px; font-weight: 600;">本地安全审计日志 (最近 30 条)</div>
+                    <div style="font-size: 12px; color: var(--text-sub);" id="auditLogPath"></div>
+                </div>
+                <div class="console" id="auditLogConsole" style="max-height: 180px;">正在加载审计日志...</div>
+            </div>
+        </div>
+
         <!-- 明细 Tab -->
         <div id="tab-details" class="tab-content">
             <table>
@@ -1127,6 +1222,8 @@ WEB_UI_HTML = """<!DOCTYPE html>
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         event.target.classList.add('active');
         document.getElementById('tab-' + name).classList.add('active');
+        if (name === 'whitelist') loadWhitelist();
+        if (name === 'history') loadHistory();
     }
 
     async function loadStats() {
@@ -1134,6 +1231,8 @@ WEB_UI_HTML = """<!DOCTYPE html>
         const res = await fetch('/api/stats');
         globalData = await res.json();
         renderStats();
+        loadWhitelist();
+        loadHistory();
     }
 
     function renderStats() {
@@ -1196,7 +1295,10 @@ WEB_UI_HTML = """<!DOCTYPE html>
         const res = await fetch('/api/clean', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await res.json();
         log(data.message);
-        if (!isDryRun) loadStats();
+        if (!isDryRun) {
+            loadStats();
+            loadHistory();
+        }
     }
 
     async function scanDedup() {
@@ -1226,6 +1328,121 @@ WEB_UI_HTML = """<!DOCTYPE html>
         const data = await res.json();
         log(data.message);
         loadStats();
+        loadHistory();
+    }
+
+    async function loadWhitelist() {
+        try {
+            const res = await fetch('/api/whitelist');
+            const data = await res.json();
+            const tbody = document.getElementById('whitelistBody');
+            tbody.innerHTML = '';
+            if (!data.rules || data.rules.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-sub); padding:16px;">当前暂无白名单保护规则</td></tr>';
+                return;
+            }
+            data.rules.forEach(r => {
+                const protStr = r.protect === 'absolute' ? '<span style="color:var(--success); font-weight:600;">🔒 绝对保护</span>' : `<span style="color:var(--warning)">⏱️ 保留 ${r.retain_days} 天</span>`;
+                const kwStr = r.keywords && r.keywords.length > 0 ? r.keywords.join(', ') : '-';
+                const ts = (r.created_at || '').substring(0, 19).replace('T', ' ');
+                tbody.innerHTML += `<tr>
+                    <td><b>${r.name}</b></td>
+                    <td><code>${r.wxid}</code></td>
+                    <td>${protStr}</td>
+                    <td>${kwStr}</td>
+                    <td><small style="color:var(--text-sub)">${ts}</small></td>
+                    <td><button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick="removeWhitelistRule('${r.wxid}')">移除</button></td>
+                </tr>`;
+            });
+        } catch (e) {}
+    }
+
+    async function addWhitelistRule() {
+        const name = document.getElementById('wlName').value.trim();
+        const wxid = document.getElementById('wlWxid').value.trim();
+        if (!name || !wxid) {
+            alert('请提供联系人姓名和微信号/群ID！');
+            return;
+        }
+        const payload = {
+            name: name,
+            wxid: wxid,
+            protect: document.getElementById('wlProtect').value,
+            keywords: document.getElementById('wlKeywords').value.trim(),
+            retain_days: parseInt(document.getElementById('wlRetainDays').value || '0')
+        };
+        const res = await fetch('/api/whitelist/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        log(data.message || '白名单已更新');
+        document.getElementById('wlName').value = '';
+        document.getElementById('wlWxid').value = '';
+        document.getElementById('wlKeywords').value = '';
+        loadWhitelist();
+    }
+
+    async function removeWhitelistRule(target) {
+        if (!confirm('确定要移除规则 ' + target + ' 吗？')) return;
+        const res = await fetch('/api/whitelist/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target: target })
+        });
+        const data = await res.json();
+        log(data.message || '规则已移除');
+        loadWhitelist();
+    }
+
+    async function loadHistory() {
+        try {
+            const res = await fetch('/api/history');
+            const data = await res.json();
+            document.getElementById('histRuns').innerText = data.total_runs + ' 次';
+            document.getElementById('histScansCleans').innerText = `扫描 ${data.total_scans} 次 / 清理 ${data.total_cleans} 次 / 去重 ${data.total_dedups} 次`;
+            document.getElementById('histFreed').innerText = data.total_freed_str;
+            document.getElementById('histProtected').innerText = data.total_protected_str;
+            document.getElementById('histNps').innerText = data.nps_score !== null ? data.nps_score + ' / 10 分' : '尚未评分';
+            document.getElementById('auditLogPath').innerText = data.audit_log_path || '';
+
+            const tbody = document.getElementById('historyBody');
+            tbody.innerHTML = '';
+            const actMap = {
+                'clean': '清理瘦身',
+                'archive': '外置归档',
+                'dedup_hardlink': 'APFS硬链接去重',
+                'dedup_trash': '废纸篓去重',
+                'scan': '空间扫描'
+            };
+            if (!data.history || data.history.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-sub); padding:16px;">尚无历史操作记录</td></tr>';
+            } else {
+                data.history.forEach(h => {
+                    const ts = (h.timestamp || '').substring(0, 19).replace('T', ' ');
+                    const actName = actMap[h.action] || h.action;
+                    const freedStr = h.freed_bytes ? (h.freed_bytes / 1024 / 1024).toFixed(1) + ' MB' : '0 B';
+                    const protStr = h.protected_bytes ? (h.protected_bytes / 1024 / 1024).toFixed(1) + ' MB' : '-';
+                    tbody.innerHTML += `<tr>
+                        <td><small style="color:var(--text-sub)">${ts}</small></td>
+                        <td><b>${actName}</b></td>
+                        <td>${h.count || 0}</td>
+                        <td style="color:var(--success); font-weight:600;">${freedStr}</td>
+                        <td style="color:var(--primary);">${protStr}</td>
+                        <td><small style="color:var(--text-sub)">${h.note || ''}</small></td>
+                    </tr>`;
+                });
+            }
+
+            const alc = document.getElementById('auditLogConsole');
+            if (data.recent_logs && data.recent_logs.length > 0) {
+                alc.innerText = data.recent_logs.join('\\n');
+            } else {
+                alc.innerText = '> 审计日志文件尚为空或尚未生成操作。';
+            }
+            alc.scrollTop = alc.scrollHeight;
+        } catch (e) {}
     }
 
     window.onload = loadStats;
@@ -1238,6 +1455,8 @@ WEB_UI_HTML = """<!DOCTYPE html>
 class WeChatSlimWebHandler(BaseHTTPRequestHandler):
     """本地轻量级 WebUI HTTP 请求处理器."""
     custom_path: Optional[Path] = None
+    whitelist_config: Optional[Path] = None
+    state_path: Optional[Path] = None
 
     def _send_json(self, data: Any, status: int = 200) -> None:
         raw = json.dumps(data, ensure_ascii=False).encode('utf-8')
@@ -1314,6 +1533,34 @@ class WeChatSlimWebHandler(BaseHTTPRequestHandler):
                 'total_saving_bytes': total_saving,
                 'total_saving_str': format_bytes(total_saving),
             })
+        elif parsed.path == '/api/whitelist':
+            wl_mgr = WhiteListManager(self.whitelist_config)
+            rules = [r.to_dict() for r in wl_mgr.list_rules()]
+            self._send_json({'rules': rules})
+        elif parsed.path == '/api/history':
+            state_mgr = StateManager(self.state_path)
+            log_path = Path.home() / ".wechat_slim" / "audit.log"
+            recent_logs = []
+            if log_path.exists():
+                try:
+                    with open(log_path, 'r', encoding='utf-8') as lf:
+                        recent_logs = [l.strip() for l in lf.readlines()[-30:]]
+                except Exception:
+                    pass
+            self._send_json({
+                'total_runs': state_mgr.total_runs,
+                'total_scans': state_mgr.total_scans,
+                'total_cleans': state_mgr.total_cleans,
+                'total_dedups': state_mgr.total_dedups,
+                'total_freed_bytes': state_mgr.total_freed_bytes,
+                'total_freed_str': format_bytes(state_mgr.total_freed_bytes),
+                'total_protected_bytes': state_mgr.total_protected_bytes,
+                'total_protected_str': format_bytes(state_mgr.total_protected_bytes),
+                'nps_score': state_mgr.nps_score,
+                'history': [h.to_dict() for h in reversed(state_mgr.history[-20:])],
+                'recent_logs': recent_logs,
+                'audit_log_path': str(log_path),
+            })
         else:
             self.send_response(404)
             self.end_headers()
@@ -1336,18 +1583,65 @@ class WeChatSlimWebHandler(BaseHTTPRequestHandler):
             types = [t.strip() for t in body.get('types', 'video,file').split(',') if t.strip()]
             dry_run = bool(body.get('dry_run', True))
             archive_to = Path(body['archive_to']) if body.get('archive_to') else None
+            wl_mgr = WhiteListManager(self.whitelist_config)
 
-            count, freed = execute_slimming(acc, categories, days, min_size, types, dry_run=dry_run, archive_to=archive_to)
-            msg = f"[演练完成] 预计影响 {count:,} 个文件，可释放 {format_bytes(freed)} 空间" if dry_run else f"[处理完成] 成功处理 {count:,} 个文件，释放 {format_bytes(freed)} 空间！"
-            self._send_json({'count': count, 'freed_bytes': freed, 'freed_str': format_bytes(freed), 'message': msg})
+            res = execute_slimming(
+                acc, categories, days, min_size, types, dry_run=dry_run, archive_to=archive_to, whitelist_mgr=wl_mgr
+            )
+            if not dry_run:
+                state_mgr = StateManager(self.state_path)
+                state_mgr.record_clean(
+                    res.freed_count, res.freed_bytes, res.protected_count, res.protected_bytes, is_archive=bool(archive_to)
+                )
+                _audit_logger.info(
+                    f"WebUI: executed clean freed={res.freed_count} ({res.freed_bytes} bytes), "
+                    f"protected={res.protected_count} ({res.protected_bytes} bytes)"
+                )
+            msg = f"[演练完成] 预计影响 {res.freed_count:,} 个文件，可释放 {format_bytes(res.freed_bytes)} 空间" if dry_run else f"[处理完成] 成功处理 {res.freed_count:,} 个文件，释放 {format_bytes(res.freed_bytes)} 空间！"
+            if res.protected_count > 0:
+                msg += f" (已跳过锁定保护 {res.protected_count:,} 个核心人脉文件，{format_bytes(res.protected_bytes)})"
+            self._send_json({
+                'count': res.freed_count,
+                'freed_bytes': res.freed_bytes,
+                'freed_str': format_bytes(res.freed_bytes),
+                'protected_count': res.protected_count,
+                'protected_bytes': res.protected_bytes,
+                'protected_str': format_bytes(res.protected_bytes),
+                'message': msg,
+            })
         elif parsed.path == '/api/dedup_exec':
             min_size = parse_size_str(body.get('min_size', '500KB'))
             action = body.get('action', 'hardlink')
             groups = find_duplicates(categories, ['video', 'file', 'attach'], min_size_bytes=min_size)
             actionable = [g for g in groups if g.wasted_count > 0]
             count, freed = execute_dedup(actionable, action=action, dry_run=False)
+            state_mgr = StateManager(self.state_path)
+            state_mgr.record_dedup(count, freed, action=action)
+            _audit_logger.info(f"WebUI: executed dedup action={action}, processed={count}, freed={freed}")
             msg = f"[去重完成] 成功转换 {count:,} 个重复副本为 APFS 硬链接，物理释放 {format_bytes(freed)} 磁盘空间！" if action == 'hardlink' else f"[去重完成] 成功移入废纸篓 {count:,} 个重复副本，释放 {format_bytes(freed)} 空间！"
             self._send_json({'count': count, 'freed_bytes': freed, 'freed_str': format_bytes(freed), 'message': msg})
+        elif parsed.path == '/api/whitelist/add':
+            name = str(body.get('name', '')).strip()
+            wxid = str(body.get('wxid', '')).strip()
+            if not name or not wxid:
+                self._send_json({'error': '名称与微信ID不能为空'}, status=400)
+                return
+            protect = body.get('protect', 'absolute')
+            keywords = [k.strip() for k in str(body.get('keywords', '')).split(',') if k.strip()]
+            retain_days = int(body.get('retain_days', 0))
+            wl_mgr = WhiteListManager(self.whitelist_config)
+            rule = wl_mgr.add(name, wxid, protect=protect, keywords=keywords, retain_days=retain_days)
+            _audit_logger.info(f"WebUI: added whitelist rule '{rule.name}' ({rule.wxid})")
+            self._send_json({'rule': rule.to_dict(), 'message': f'成功添加白名单规则: {rule.name}'})
+        elif parsed.path == '/api/whitelist/remove':
+            target = str(body.get('target', '')).strip()
+            wl_mgr = WhiteListManager(self.whitelist_config)
+            ok = wl_mgr.remove(target)
+            if ok:
+                _audit_logger.info(f"WebUI: removed whitelist rule '{target}'")
+                self._send_json({'ok': True, 'message': f'已移除白名单规则: {target}'})
+            else:
+                self._send_json({'ok': False, 'message': f'未找到白名单规则: {target}'}, status=404)
         else:
             self.send_response(404)
             self.end_headers()
@@ -1362,6 +1656,8 @@ def cmd_web(args: argparse.Namespace) -> None:
     port = getattr(args, 'port', 8080)
     custom_path = getattr(args, 'path', None)
     WeChatSlimWebHandler.custom_path = custom_path
+    WeChatSlimWebHandler.whitelist_config = getattr(args, 'whitelist_config', None)
+    WeChatSlimWebHandler.state_path = getattr(args, 'state_path', None)
 
     server = HTTPServer(('127.0.0.1', port), WeChatSlimWebHandler)
     url = f"http://127.0.0.1:{port}"
@@ -1501,6 +1797,8 @@ def main() -> None:
     web_p.add_argument('--port', type=int, default=8080, help='指定本地网页端口 (默认: 8080)')
     web_p.add_argument('--path', default=None, help='指定自定义微信存储目录 (默认: 自动发现系统微信目录)')
     web_p.add_argument('--no-browser', action='store_true', help='不自动打开默认浏览器')
+    web_p.add_argument('--whitelist-config', default=None, help=argparse.SUPPRESS)
+    web_p.add_argument('--state-path', default=None, help=argparse.SUPPRESS)
 
     tag_p = subparsers.add_parser('tag', help='核心人脉与重要会话防删白名单管理')
     tag_p.add_argument('--add', default=None, metavar='NAME', help='受保护人脉/群名称 (如: "老婆", "重要客户")')

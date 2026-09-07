@@ -283,6 +283,52 @@ class TestWeChatSlim(unittest.TestCase):
                 self.assertIn('account', data)
                 self.assertIn('categories', data)
                 self.assertIn('db', data['categories'])
+
+            # 3. 测试 /api/whitelist 查询接口
+            wl_file = test_dir / "wl.json"
+            state_file = test_dir / "state.json"
+            WeChatSlimWebHandler.whitelist_config = wl_file
+            WeChatSlimWebHandler.state_path = state_file
+
+            with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/whitelist') as resp:
+                self.assertEqual(resp.status, 200)
+                wl_data = json.loads(resp.read().decode('utf-8'))
+                self.assertEqual(wl_data['rules'], [])
+
+            # 4. 测试 POST /api/whitelist/add 添加白名单规则
+            req_add = urllib.request.Request(
+                f'http://127.0.0.1:{port}/api/whitelist/add',
+                data=json.dumps({'name': '老婆', 'wxid': 'wxid_wife', 'protect': 'absolute'}).encode('utf-8'),
+                headers={'Content-Type': 'application/json'}
+            )
+            with urllib.request.urlopen(req_add) as resp:
+                self.assertEqual(resp.status, 200)
+                res_add = json.loads(resp.read().decode('utf-8'))
+                self.assertEqual(res_add['rule']['name'], '老婆')
+
+            # 5. 验证白名单已存在
+            with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/whitelist') as resp:
+                self.assertEqual(resp.status, 200)
+                wl_data = json.loads(resp.read().decode('utf-8'))
+                self.assertEqual(len(wl_data['rules']), 1)
+
+            # 6. 测试 GET /api/history 接口
+            with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/history') as resp:
+                self.assertEqual(resp.status, 200)
+                hist_data = json.loads(resp.read().decode('utf-8'))
+                self.assertIn('total_runs', hist_data)
+                self.assertIn('recent_logs', hist_data)
+
+            # 7. 测试 POST /api/whitelist/remove 移除白名单规则
+            req_rm = urllib.request.Request(
+                f'http://127.0.0.1:{port}/api/whitelist/remove',
+                data=json.dumps({'target': 'wxid_wife'}).encode('utf-8'),
+                headers={'Content-Type': 'application/json'}
+            )
+            with urllib.request.urlopen(req_rm) as resp:
+                self.assertEqual(resp.status, 200)
+                res_rm = json.loads(resp.read().decode('utf-8'))
+                self.assertTrue(res_rm['ok'])
         finally:
             try:
                 server.shutdown()
