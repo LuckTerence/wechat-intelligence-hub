@@ -24,6 +24,8 @@ if _hub_py.exists():
 
 try:
     from engine import whitelist
+    from engine import contact_resolver
 except ImportError:
     pass
+
 
