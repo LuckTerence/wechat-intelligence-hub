@@ -147,13 +147,51 @@ class TestWhiteListManager(unittest.TestCase):
         self.assertTrue(prot)
         self.assertIn("老婆", reason)
 
-    # 20. 路径字符串中命中 wxid
-    def test_is_protected_wxid_in_path_string(self):
+    # 20. 安全回归: wxid 禁止对完整路径做"子串"匹配
+    #     微信 4.0 的账号根目录形如 "<wxid>_<序号>"，子串匹配会让任意 wxid
+    #     规则命中该账号下 100% 的文件，白名单彻底失真（本项目曾经的真实缺陷）。
+    def test_is_protected_wxid_substring_must_not_match(self):
         self.manager.add("重要群", "18923489@chatroom")
         p = "/data/xwechat_files/msg/attach/18923489@chatroom_att.dat"
+        prot, _ = self.manager.is_protected(p)
+        self.assertFalse(prot, "wxid 不得通过子串命中无关文件")
+
+    # 20b. 真实缺陷回归: 账号根目录的 wxid 前缀不得保护整个账号下的所有文件
+    def test_account_dir_wxid_prefix_does_not_protect_everything(self):
+        self.manager.add("老婆", "wxid_kdm0jksur2yh12", protect="absolute")
+        base = Path(
+            "/Users/me/Library/Containers/com.tencent.xinWeChat/Data/Documents/"
+            "xwechat_files/wxid_kdm0jksur2yh12_6804"
+        )
+        for rel in (
+            "msg/file/2026-09/abcdef123456",
+            "msg/attach/deadbeef/img.dat",
+            "db_storage/message/1.db",
+            "msg/video/2026-07/xx.mp4",
+        ):
+            prot, _ = self.manager.is_protected(base / rel)
+            self.assertFalse(prot, f"不应被白名单保护: {rel}")
+
+    # 20c. 精确路径段（目录名完全相等）命中仍然生效
+    def test_is_protected_wxid_exact_segment_still_works(self):
+        self.manager.add("重要群", "18923489@chatroom")
+        p = "/data/xwechat_files/18923489@chatroom/attach/xx.dat"
         prot, reason = self.manager.is_protected(p)
         self.assertTrue(prot)
         self.assertIn("重要群", reason)
+
+    # 20d. 关键词命中真实微信文件名
+    #      微信 4.0 的 msg/file/ 保留原始文件名，这是白名单真正可用的保护维度。
+    def test_is_protected_keyword_on_real_wechat_filename(self):
+        self.manager.add("甲方", "wxid_jiafang", keywords=["合同", "报价"])
+        prot, reason = self.manager.is_protected("/msg/file/2026-09/嘉华合同终版.pdf")
+        self.assertTrue(prot)
+        self.assertIn("甲方", reason)
+        # 哈希命名的媒体文件不应被关键词规则误伤
+        prot2, _ = self.manager.is_protected(
+            "/msg/video/2026-09/005fc029823384f81c44a02f9668c343.mp4"
+        )
+        self.assertFalse(prot2)
 
     # 21. 文件名中命中联系人名称
     def test_is_protected_name_in_filename(self):
