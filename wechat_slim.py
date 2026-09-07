@@ -82,8 +82,43 @@ class ScanCategory:
     files: List[Tuple[Path, int, float]] = field(default_factory=list)  # (path, size, mtime)
 
 
-def discover_accounts() -> List[AccountProfile]:
-    """自动发现当前 Mac 上的微信存储账号路径."""
+def discover_accounts(custom_path: Optional[Path] = None) -> List[AccountProfile]:
+    """自动发现或指定当前 Mac 上的微信存储账号路径."""
+    if custom_path:
+        cp = Path(custom_path).resolve()
+        if cp.is_dir():
+            if (cp / 'db_storage').exists() or (cp / 'msg').exists() or (cp / 'cache').exists():
+                return [
+                    AccountProfile(
+                        account_id=cp.name,
+                        version_type='custom (自定义目录)',
+                        root_path=cp,
+                        db_path=cp / 'db_storage' if (cp / 'db_storage').exists() else None,
+                        msg_video_path=cp / 'msg/video' if (cp / 'msg/video').exists() else None,
+                        msg_file_path=cp / 'msg/file' if (cp / 'msg/file').exists() else None,
+                        msg_attach_path=cp / 'msg/attach' if (cp / 'msg/attach').exists() else None,
+                        cache_path=cp / 'cache' if (cp / 'cache').exists() else None,
+                        temp_path=cp / 'temp' if (cp / 'temp').exists() else None,
+                    )
+                ]
+            accs = []
+            for sub in cp.iterdir():
+                if sub.is_dir() and not sub.name.startswith('.'):
+                    accs.append(AccountProfile(
+                        account_id=sub.name,
+                        version_type='custom (自定义目录)',
+                        root_path=sub,
+                        db_path=sub / 'db_storage' if (sub / 'db_storage').exists() else None,
+                        msg_video_path=sub / 'msg/video' if (sub / 'msg/video').exists() else None,
+                        msg_file_path=sub / 'msg/file' if (sub / 'msg/file').exists() else None,
+                        msg_attach_path=sub / 'msg/attach' if (sub / 'msg/attach').exists() else None,
+                        cache_path=sub / 'cache' if (sub / 'cache').exists() else None,
+                        temp_path=sub / 'temp' if (sub / 'temp').exists() else None,
+                    ))
+            if accs:
+                return accs
+        return []
+
     accounts: List[AccountProfile] = []
     home = Path.home()
 
@@ -261,9 +296,10 @@ def execute_slimming(
 
 def cmd_scan(args: argparse.Namespace) -> None:
     """执行扫描并展示存储透视概览."""
-    accounts = discover_accounts()
+    custom_path = getattr(args, 'path', None)
+    accounts = discover_accounts(custom_path)
     if not accounts:
-        print('[-] 未在默认 macOS 容器中发现微信数据目录。')
+        print('[-] 未在指定或默认微信容器中发现微信数据目录。')
         print('    提示: 请确认微信是否安装，或是否有登录过的账号。')
         return
 
@@ -296,7 +332,8 @@ def cmd_scan(args: argparse.Namespace) -> None:
 
 def cmd_clean(args: argparse.Namespace) -> None:
     """执行瘦身清理或外置归档."""
-    accounts = discover_accounts()
+    custom_path = getattr(args, 'path', None)
+    accounts = discover_accounts(custom_path)
     if not accounts:
         print('[-] 未发现可操作的微信账号目录。')
         return
@@ -421,9 +458,11 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest='subcommand')
 
-    subparsers.add_parser('scan', help='扫描并展示微信存储空间深度分布')
+    scan_p = subparsers.add_parser('scan', help='扫描并展示微信存储空间深度分布')
+    scan_p.add_argument('--path', default=None, help='指定自定义微信存储目录 (默认: 自动发现系统微信目录)')
 
     clean_p = subparsers.add_parser('clean', help='执行文件瘦身或外置归档')
+    clean_p.add_argument('--path', default=None, help='指定自定义微信存储目录 (默认: 自动发现系统微信目录)')
     clean_p.add_argument('--days', type=int, default=90, help='清理多少天前的文件 (默认: 90 天，0 为不限时间)')
     clean_p.add_argument('--min-size', default='0B', help='文件最小大小阈值 (例如: 20MB, 10MB，默认: 0B)')
     clean_p.add_argument('--types', default='video,file,cache', help='清理文件类型，逗号分隔 (可选: video,file,attach,cache)')
