@@ -107,6 +107,12 @@ python3 wechat_slim.py clean --days 90 --min-size 20MB --types video,file
 
 # 5. 无损转存到外接移动硬盘 / NAS（安全归档模式）
 python3 wechat_slim.py clean --days 180 --archive-to "/Volumes/MyPassport/WeChat_Archive"
+
+# 6. 多群转发文件秒级查重与 APFS 硬链接去重 (零风险，聊天窗口文件正常打开)
+python3 wechat_slim.py dedup --action hardlink
+
+# 7. 启动本地现代化图形大盘 (WebUI，零依赖开箱即用)
+python3 wechat_slim.py web --port 8080
 ```
 
 ### 6.2 交互式向导（向导模式界面范例）
@@ -143,16 +149,18 @@ python3 wechat_slim.py clean --days 180 --archive-to "/Volumes/MyPassport/WeChat
 
 ---
 
-## 7. 迭代里程碑
+## 7. 迭代里程碑与交付状态
 
-* **Phase 1（当前）：极简 CLI**
-  * 自动识别微信 4.0+ 与 3.x 路径；
-  * 实现空间深度透视 (`scan`)；
-  * 实现演练模式 (`--dry-run`) 与废纸篓安全清理 (`--trash`)；
-  * 实现转存外置硬盘归档 (`--archive-to`)。
+* **Phase 1：极简 CLI 与核心引擎 (✅ 100% 已交付)**
+  * [x] 自动识别微信 4.0+ 与 3.x 路径与 `--path` 自定义目录；
+  * [x] 实现空间深度透视 (`scan`) 与分类占比分析；
+  * [x] 实现演练模式 (`--dry-run`) 与废纸篓安全清理 (`move_to_trash`)；
+  * [x] 实现转存外置移动硬盘/NAS 归档 (`--archive-to`)；
+  * [x] 交互式终端向导 (`interactive_wizard`)。
 * **Phase 2：哈希查重与白名单过滤**
-  * 引入大文件哈希去重；
-  * 读取联系人标签，实现白名单联系人文件防删锁。
+  * [x] **三级哈希流水线查重** (`dedup`)：大小桶初筛 + 稀疏快速采样哈希 + 全量 MD5；
+  * [x] **APFS 硬链接秒级去重**：微信所有群聊窗口仍可原样正常打开文件，但在物理磁盘只占 1 份空间；
+  * [ ] 读取联系人与会话数据库，实现白名单联系人文件防删锁。
 * **Phase 3：图形化面板与自然语言 Skill**
-  * 本地 WebUI 缩略图大盘；
-  * 接入 AI Agent 技能。
+  * [x] **本地可视化图形大盘 (`web`)**：零第三方依赖、内置轻量 HTTP 服务器，支持浏览器实时查看分布与一键操作；
+  * [ ] 接入 AI Agent / Antigravity 技能，支持自然语言对话清理。
