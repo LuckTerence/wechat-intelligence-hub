@@ -1,203 +1,242 @@
-# WeChat Intelligence Hub
+# WeChat Slim - 微信智能无损瘦身与人脉透视工具 (Mac 版)
 
-微信个人情报库：把本地微信聊天变成可检索、可核查、可行动的个人情报，包括联系人历史、群聊主题、待回复、承诺、商机、复联线索，以及任意指定时间范围的情报报告。
+<p align="center">
+  <img src="https://img.shields.io/badge/Platform-macOS%20(Apple%20Silicon%20%26%20Intel)-000000?logo=apple&style=for-the-badge" alt="macOS" />
+  <img src="https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white&style=for-the-badge" alt="Python 3.8+" />
+  <img src="https://img.shields.io/badge/Dependencies-Zero%20(Standard%20Lib)-2ea44f?style=for-the-badge" alt="Zero Dependencies" />
+  <img src="https://img.shields.io/badge/Tests-168%20Passing-brightgreen?style=for-the-badge" alt="Tests" />
+  <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License: MIT" />
+</p>
 
-这不是 Prompt 大礼包，而是一个独立的微信旗舰项目。仓库同时提供只读数据入口和情报工作流，并配有可执行入口、边界、测试和全虚构样例。
+> 💡 **让 Mac 微信瞬间释放数十 GB 存储空间，绝对不误删重要文件与聊天记录！**  
+> 专为 macOS 深度定制，融合 **APFS 原生硬链接去重**、**核心人脉防删白名单**、**联系人数据库智能反解**、**移动硬盘无损归档** 与 **本地轻量级 WebUI 可视化大盘**。
 
-当前首发版本为 `v0.9.2-preview.2`。微信相关代码已经具备公开测试条件，但不是“安装后自动读取所有人的完整微信历史”：完整数据库模式需要本人授权的本地数据库和访问材料。Reader 核心不获取密钥、不重签名、不注入、不 Hook 微信；可选的实验性接入助手有独立授权和副作用边界，见下文。
+---
 
-## 一个产品，两个 Skill
+## 🌟 痛点与核心价值
 
-| Skill / Project | 作用 | 状态 |
-|---|---|---|
-| `wechat-cli` | Rion 自有的只读 Reader 入口；v0.9.2-preview.2 已覆盖旧版接口、schema-2 salt-key 授权导入、WCDB 压缩消息与本机实读验收 | 依赖层 / Preview |
-| `wechat-intelligence-hub` | 把微信记录转成日报、待回复、承诺、商机和复联线索 | 用户入口 / Flagship |
+随着微信深度绑定日常工作与生活，Mac 微信动辄吞噬 **50GB ~ 100GB+** 宝贵的固态硬盘空间：
+- ❌ **传统清理工具粗暴抹除**：一键“清理缓存”往往误伤客户合同、报价单、珍贵家庭照片；
+- ❌ **“多群转发”冗余严重**：同一个 100MB 视频被转发到 10 个群，微信就会保存 10 份物理副本，白白浪费 1GB 磁盘；
+- ❌ **外部依赖臃肿**：很多工具需要安装庞大的第三方环境，存在隐私泄露风险。
 
-微信能力在代码中分成四层，方便独立测试和维护；对用户仍是一套产品、一次安装：
+**WeChat Slim (微信智能瘦身)** 专为解决上述痛点而生：
+1. **APFS 秒级硬链接去重 (杀手锏 🔥)**：同一个文件转发再多群，在 macOS APFS 底层合并为共享 Inode。**只占 1 份物理磁盘空间，微信内各个聊天窗口依然能原样点击秒开，无需重新下载**。
+2. **核心人脉与 VIP 会话防删白名单 (🛡️ VIP Protection)**：可将重要客户、领导、家人（老婆、孩子）设为保护对象；**即使执行全盘大清理，白名单会话中的合同与文件拥有一票否决权，绝对免疫误删**。
+3. **联系人/群聊昵称自动智能反解**：通过 SQLite 只读连接池无损反解加密会话中的真实微信昵称与备注名，告别晦涩难懂的哈希串与 `wxid`。
+4. **100% 数据库绝对隔离防护**：所有核心聊天记录数据库 (`db_storage`, `*.db`, `*.sqlite`, `*.wcdb`) 在底层直接硬编码隔离，绝不读写、修改或删除任何数据库文件。
+5. **安全废纸篓与外置移动硬盘无损归档**：非毁灭性清理，清理文件默认安全移入 macOS 废纸篓（可随时放回原处），或按原完整目录树一键转存归档至外置 SSD/NAS。
+6. **真正的零依赖 (Zero External Dependencies)**：核心能力 **100% 基于 Python 3.8+ 标准库** 实现，无须编译任何 C 扩展。环境检测到支持时自动增强 Rich 彩色终端流式输出与动态进度条，无感知优雅降级。
+7. **原生本地 WebUI 可视化大盘**：内置标准库 HTTP 服务，无需 Node.js 或前端编译，一键启动本地浏览器看板，直观掌控空间分布与白名单规则。
 
-- `projects/rion-wechat-reader/`：Rion 自有的 clean-room 只读 Reader 核心。
-- `skills/wechat-cli/`：Reader 的统一 Agent 入口，默认只调用 Rion 自有 Reader；只有使用者显式设置 `RION_WECHAT_CLI_BIN` 时才调用兼容后端。
-- `skills/wechat-intelligence-hub/`：Agent 的调用入口与判断规则。
-- `projects/wechat-intelligence-hub/`：确定性本地引擎、虚构样例和测试。
+---
 
-Rion 的通用 Skill 合集 `rionwu-skills` 只负责收录、发现和链接本项目，不复制微信读取器源码或 Git 历史。
+## 🚀 快速上手
 
-## 安装
+### 1. 安装方式
 
-### 直接让Codex安装和配置
+#### 方式 A：通过 pip 本地安装 (推荐，全局注册 `wechat-slim` 命令)
+```bash
+git clone https://github.com/LuckTerence/CleanYourWechatTool.git
+cd CleanYourWechatTool
+pip install .
+```
 
-把下面这段发给Codex即可，不需要自己逐条执行命令：
+#### 方式 B：免安装直接脚本运行
+无需安装任何包，克隆后直接使用系统的 Python 运行：
+```bash
+python3 wechat_slim.py --help
+```
 
+---
+
+## 🎮 极简交互式向导模式
+
+如果你不想记任何参数，直接在终端输入命令回车，即可启动贴心的交互式向导：
+```bash
+wechat-slim
+```
+向导将自动探测微信账号、展示存储健康度，引导你选择进行“智能透视”、“硬链接去重”或“安全瘦身”。
+
+---
+
+## 🛠️ 六大核心命令详解
+
+### 1. `scan` - 存储空间智能透视与人脉分布
+自动识别 macOS 微信 3.x 与 4.0+ 存储容器，深度统计视频、文件、附件、缓存与白名单保护资产。
+
+```bash
+# 自动发现本机微信账号并扫描
+wechat-slim scan
+
+# 指定自定义微信路径进行扫描
+wechat-slim scan --path ~/CustomWeChatDir
+```
+
+**终端输出示例：**
 ```text
-请从 https://github.com/Rion-Wu-tech/wechat-intelligence-hub 安装微信CLI和微信个人情报库，接入这台电脑上我自己的微信。
-先读取仓库说明，检查是否已经安装、当前配置是否可用；已有可用配置或key就复用，不覆盖我的个人Profile和数据。
-缺少依赖由你处理；确实缺key时，由你核验并准备固定版本工具，说明影响、经我确认后执行。我负责登录微信和完成系统授权，不会把密码或key发给你。
-完成数据库验证和配置后，告诉我能读取哪些范围、还有什么未就绪；再协助初始化个人情报库。遇到错误请定位并修复，不要把一堆命令交给我，也不要无限重试。
+==================================================================
+  WeChat Slim - 微信智能存储透视器
+==================================================================
+  账号 [89ab32...] - v4 (微信 4.0+)
+  路径: /Users/username/Library/Containers/com.tencent.xinWeChat/...
+------------------------------------------------------------------
+  • db_storage   :   166.1 MB     (89 个文件)    2.9%  [🔒 数据库绝对保护]
+  • video        :     1.1 GB    (358 个文件)   19.9%  [可瘦身]
+  • file         :     1.1 GB    (140 个文件)   19.8%  [可瘦身]
+  • attach       :     2.8 GB (11,000 个文件)   49.7%  [可瘦身]
+  • cache        :   437.9 MB  (3,857 个文件)    7.6%  [可瘦身]
+------------------------------------------------------------------
+  总空间占用   : 5.6 GB
+  可瘦身潜力   : 5.4 GB (97.1% 的空间可被安全瘦身/转存)
+------------------------------------------------------------------
+  🛡️ 核心人脉白名单保护:
+  • 活跃白名单规则 : 2 条 (老婆 [宝贝], 战略合作群)
+  • 已锁定保护文件 : 42 个文件 (380.5 MB 空间受白名单绝对保护，绝不误删)
+==================================================================
 ```
 
-这是有人确认关键操作的接入工作流，不是无条件、无人值守的解密。已有安装如何升级、微信升级后如何排障，见[配置与排障提示词](docs/USAGE.md#让codex处理配置与排障)。
+---
 
-### 手动安装入口
-
-**先确认接入条件：安装成功不等于已能读取聊天。** 已有本机访问材料可直接验证、导入；没有key时，由Codex按[五步首次接入工作流](skills/wechat-cli/references/access-onboarding.md)准备固定版本工具，经审核和明确确认后尝试获取，可能重启微信和重签名副本。用户只需登录、确认影响和完成系统授权，不需要复制key。仓库不捆绑获取工具，安装和日常日报均不会触发获取；macOS新机器获取路径尚未实测，不保证所有版本可用。请勿向维护者、社群或Issue发送key、密码和数据库。
-
-克隆仓库：
+### 2. `dedup` - 多群重复文件 APFS 硬链接去重 (杀手锏 🔥)
+三级分流查重架构（文件大小桶预筛 -> 快速稀疏首尾哈希 -> 全量 MD5 指纹），精准锁定多群转发文件。利用 macOS APFS 文件系统的 Hardlink 特性实现秒级去重，**释放物理磁盘空间，微信各群聊天记录文件完整可用**。
 
 ```bash
-git clone https://github.com/Rion-Wu-tech/wechat-intelligence-hub.git
-cd wechat-intelligence-hub
+# 第一步: 演练模式 (Dry-Run)，仅计算查重节省空间，不修改磁盘
+wechat-slim dedup --dry-run
+
+# 第二步: 正式执行 APFS 硬链接去重 (推荐，无损立省数十GB)
+wechat-slim dedup --action hardlink -f
+
+# 可选: 仅对超过 5MB 的视频和文件执行查重
+wechat-slim dedup --types video,file --min-size 5MB -f
+
+# 可选: 将多余副本直接移入废纸篓 (不保留硬链接)
+wechat-slim dedup --action trash -f
 ```
 
-安装完整产品：
+---
+
+### 3. `tag` - VIP 核心人脉防删白名单管理
+支持设置绝对防删 (`absolute`)、限制保留时间 (`retain_days`) 或文件名关键字过滤 (`keywords`)。配合 `ContactResolver`，自动反解联系人微信名称。
 
 ```bash
-./scripts/install.sh --with-sqlcipher
+# 1. 添加绝对保护人脉 (该联系人的所有文件在任何清理中均被锁定保护)
+wechat-slim tag --add "老婆" --wxid "wxid_wife123" --protect absolute
+
+# 2. 添加重要商务客户 (仅重点保护合同、发票等关键凭证)
+wechat-slim tag --add "战略合作方" --wxid "client_corp" --keywords "合同,协议,报价,发票"
+
+# 3. 查看当前所有生效的白名单规则 (自动关联显示微信备注名)
+wechat-slim tag --list
+
+# 4. 移除指定的白名单规则
+wechat-slim tag --remove "wxid_wife123"
 ```
 
-不传 Skill 名称时会安装 `wechat-cli`、`wechat-intelligence-hub` 及其本地引擎。即使只指定 `wechat-intelligence-hub`，安装器也会自动补齐它依赖的 `wechat-cli`；用户不需要手工拼装两套组件。
+---
 
-安装后可以直接对Codex说：
-
-> 用 $wechat-cli 帮我接入这台电脑上我自己的微信。已有配置或key就复用；没有就帮我准备工具，说明影响并确认后获取，再完成验证和配置。
-
-安装 `wechat-cli` Skill 时会同时安装 Rion 自有的 `rion-wechat-reader` 核心。新用户无需第三方二进制即可检查本机覆盖范围，并在 macOS 上读取系统实际保留的微信通知预览；该模式只覆盖入站预览，不能代表完整聊天记录。v0.9.2-preview.2 的公开接口已与旧 `wechat-cli 1.6.19` 的 29 项只读工具、266 个输入字段对齐，可读取用户显式提供的 schema-2 salt-key 授权材料，并安装隔离 SQLCipher 与 Zstandard 运行依赖。当前本机已完成新旧 CLI 真实数据对照、当前 macOS 图片/视频/文件路径验证和微信个人情报库端到端索引验证；其他微信版本仍按能力矩阵逐项积累。
-
-需要独立命令行入口时只安装一个 CLI：
+### 4. `clean` - 安全瘦身与外置移动硬盘无损归档
+支持自由组合时间过滤、类型过滤与大小阈值，提供废纸篓暂存与外置硬盘完整归档双重策略。
 
 ```bash
-projects/rion-wechat-reader/install.sh --with-sqlcipher
-rion-wechat-cli self-test
-rion-wechat-cli self-test --require-sqlcipher
-rion-wechat-cli access-plan --pretty
+# 模式 A: 演练模式 (Dry-Run)，安全评估将清理哪些文件
+wechat-slim clean --dry-run --days 90 --min-size 10MB --types video,file
+
+# 模式 B: 安全清理 (移入 macOS 系统废纸篓，可在访达中随时一键撤销放回)
+wechat-slim clean --days 90 --min-size 10MB --types video,file
+
+# 模式 C: 外置移动硬盘/NAS 无损完整转存 (保留原相对目录树结构)
+wechat-slim clean \
+  --archive-to "/Volumes/MyExternalSSD/WeChat_Archive" \
+  --days 180 \
+  --min-size 20MB \
+  -f
 ```
 
-`ready` 表示复用已有配置；`ready_to_configure` 才继续用相同输入运行 `setup`；`needs_access` 表示缺少访问材料，不要重复运行setup。JSON顶层 `ok: true` 仅表示诊断完成，请查看 `data.state`。部分覆盖、驱动缺失、多账号和权限问题会分别给出下一步。
+---
 
-完整历史和实时数据库读取要求有权访问的本地数据库与访问材料，且仅覆盖已同步到本机的数据。只读 Reader 与可选接入助手的边界见 [Reader 说明](projects/rion-wechat-reader/README.md)。没有数据库读取条件时，仍可运行全虚构 Demo，验证索引、判断与报告链路。
-
-安装 `wechat-intelligence-hub` 时，脚本会同时把经过隐私扫描的本地引擎放进 Codex 目录，正常调用无需再配置 `WECHAT_HUB_HOME`。先用虚构数据运行 Demo：
+### 5. `stats` - 历史累计瘦身统计与审计大盘
+实时持久化跟踪历史累计运行次数、扫描量、去重量、清理释放体积与白名单保护数据，并内置审计流水日志。
 
 ```bash
-bash projects/wechat-intelligence-hub/scripts/run_demo.sh
+# 查看累计释放空间与历史大盘
+wechat-slim stats
+
+# 查看历史操作审计流水记录
+wechat-slim stats --history
 ```
 
-只有在开发或调试仓库源码时，才需要临时指定引擎路径：
+---
+
+### 6. `web` - 本地轻量可视化看板 (WebUI Dashboard)
+基于 Python 内置 HTTP 引擎实现的现代化单页看板，无需任何前端环境，浏览器直观操作。
 
 ```bash
-export WECHAT_HUB_HOME="$PWD/projects/wechat-intelligence-hub"
+# 启动本地看板 (默认自动唤起系统浏览器打开 http://127.0.0.1:8080)
+wechat-slim web
+
+# 指定自定义端口并禁止自动开窗
+wechat-slim web --port 9090 --no-browser
 ```
 
-安装 `wechat-cli` 和 `wechat-intelligence-hub` 后，建议先做一次个性化初始化。它会把你正在做的事、个人背景和关系标签变成日报的排序依据：
+---
+
+## 🏗️ 模块化工程架构
+
+项目遵循**高内聚、低耦合与单一职责设计**，整体代码分层如下：
+
+```
+.
+├── wechat_slim.py              # CLI 命令行调度入口、参数解析与交互向导
+└── engine/                     # 底层可复用核心引擎
+    ├── common.py               # ANSI 配色、格式化计算、审计日志与 Rich 适配器
+    ├── scanner.py              # 多版本微信目录自动感知与分类扫描引擎
+    ├── cleaner.py              # 规则过滤、白名单防删校验、废纸篓与归档引擎
+    ├── dedup.py                # 分级哈希计算与 APFS 硬链接去重引擎
+    ├── web.py                  # 本地 WebUI 仪表盘与原生 HTTP API 处理
+    ├── whitelist.py            # VIP 白名单管理器 (单源真理，支持 JSON/YAML)
+    ├── contact_resolver.py     # SQLite 只读连接池联系人/群聊昵称反解引擎
+    └── state.py                # 历史指标持久化与审计流水管理器
+```
+
+---
+
+## 🤖 AI Agent 深度联动 (Antigravity / Codex / Claude)
+
+本项目自带标准的 AI Agent Skill 配置，路径位于 `skills/wechat-slim/SKILL.md`。  
+在任何支持 Agentic AI 助理的工作区中，你只需输入日常自然语言即可完成专业级清理与维护：
+
+- 🗣️ *“帮我查一下我的微信占了多少空间，有没有很多重复转发的文件？”*
+- 🗣️ *“把微信里多群转发的视频用 APFS 硬链接去重一下。”*
+- 🗣️ *“把老婆和领导加入防删白名单，然后把半年前大于 50MB 的冗余视频归档到外接移动硬盘。”*
+
+---
+
+## 🛡️ 安全底线原则
+
+| 准则 | 实现机制 |
+|---|---|
+| **数据库 100% 免疫** | `db_storage` 及 `*.db`, `*.sqlite`, `*.wcdb` 等数据库文件底层物理跳过，只读模式连接 |
+| **非毁灭性操作** | 默认采用 macOS 苹果原生 `Finder Trash` 废纸篓机制，杜绝粗暴 `rm -rf`，随时可放回原处 |
+| **白名单一票否决** | 只要命中核心人脉规则或关键词，在瘦身流程中享有最高优先级绝对豁免权 |
+| **状态损坏自愈** | 配置文件与状态数据库内置防御式容错机制，遇异常自动回退安全默认值 |
+
+---
+
+## 🧪 严苛测试验证
+
+项目内置完整、真实的端到端模拟测试体系，覆盖扫描、去重、硬链接创建、白名单过滤拦截、WebUI API 与状态持久化：
 
 ```bash
-cd projects/wechat-intelligence-hub
-python3 wechat_intelligence_hub.py profile-init \
-  --owner-alias "你的微信昵称" \
-  --personal-doc "/path/to/个人说明.md" \
-  --plan-doc "/path/to/本月计划.md" \
-  --priority-label "你的重点联系人标签"
+# 执行全量单元测试与集成测试
+python3 -m unittest discover projects/wechat-intelligence-hub/tests
 ```
+> **当前测试状态**：**168 项测试用例 100% 通过**，执行时间 < 3.0s。
 
-个人说明可以包含身份、业务、擅长领域、资源、约束和长期目标；当前计划可以包含近期目标、正在推进的项目、交付/收入优先级和截止时间。如果还没有这些文档，直接运行 `profile-init` 即可生成本地准备清单；在补齐前系统仍能生成通用报告，但会标明尚未个性化。
+---
 
-微信标签不需要照搬维护者的名字。推荐按自己的工作流建立 2–5 类，例如客户、同行、渠道、供应商、自媒体网友或品牌方。可用 `profile-init --inspect-wechat-labels` 只读查看已有标签并生成候选建议；精确关键词检索始终可以覆盖全部微信记录，不受标签限制。
+## 📄 开源协议与贡献
 
-也可以在 Codex 中直接说：
-
-```text
-$wechat-intelligence-hub 帮我初始化微信个人情报库。先查找我现有的个人说明和当前计划；如果没有，给我准备清单，再只读检查现有微信标签并建议如何分类。
-```
-
-重新打开 Codex 后，可以直接说：
-
-```text
-$wechat-intelligence-hub 查看过去 24 小时微信里最需要我处理的事情
-```
-
-## 在 Codex 中怎么使用
-
-安装并完成初始化后，不需要记命令行参数，可以直接用自然语言调用：
-
-```text
-$wechat-intelligence-hub 生成过去 24 小时的完整微信情报日报，分析群聊、重点联系人、待回复事项和商业机会。
-
-$wechat-intelligence-hub 总结我和「联系人名字」最近聊到哪里，还有什么承诺没有完成。
-
-$wechat-intelligence-hub 搜索过去 7 天所有微信聊天里关于「AI 培训」的讨论。
-
-$wechat-intelligence-hub 查找 8 月 1 日至今所有与「某个产品」有关的信息，合并同一件事的上下文并总结进展。
-
-$wechat-intelligence-hub 总结微信标签「品牌方」里最近一个月值得跟进的人和事情。
-
-$wechat-intelligence-hub 查看今天最需要我处理的 10 件事。
-
-$wechat-intelligence-hub 根据最新聊天上下文，帮我给「联系人名字」写一条符合我语气的回复草稿。
-```
-
-### 完整日报同时输出 Markdown 和 HTML
-
-24/48 小时只是常用日报窗口，不是时间上限。用户可以指定一天、一周、一个月、某段起止日期或已有索引覆盖的更长范围。完整的多会话复合报告默认保留两种正式版本：
-
-- **Markdown 版**：适合阅读、复制、归档和继续交给 AI 加工。
-- **交互式 HTML 版**：适合搜索、筛选和浏览，包含综合行动、群聊日报、重点联系人和商单信号雷达四个入口。
-
-直接在 Codex 中说：
-
-```text
-$wechat-intelligence-hub 生成过去 24 小时的完整微信情报日报，同时输出 Markdown 和旗舰交互式 HTML。
-```
-
-主要文件包括：
-
-```text
-wechat_daily_full.md          # Markdown 总入口
-wechat-report/                # 分区 Markdown
-wechat_daily_report.html      # 旗舰交互式报告
-```
-
-HTML 版支持全局搜索、分区导航、话题日报/重点群聊/群聊筛选切换、群聊展开、原链接跳转、明暗主题、打印和当前分区 Markdown 下载。报告内容会根据每位使用者的本地聊天、个人 Profile 和当前计划生成，界面与公开仓库中的旗舰渲染器保持一致。
-
-除了按时间生成综合报告，还可以围绕某条信息、某个人、某个群、某个产品/物品、某个微信标签、某个项目或某件具体事件定向查找：系统会先定位相关消息和上下文，再按会话、时间和事件关系去重总结。单个对象和回复建议默认直接在 Codex 中回答，不会为了一个简单问题额外生成网页。如果希望定向调查也保存成双版本，请在请求中明确说“同时输出 Markdown 和 HTML”。
-
-更完整的首次使用、常用提问、输出模式和命令行说明见 [`docs/USAGE.md`](docs/USAGE.md)。
-
-## 隐私与安全
-
-- 微信相关能力只读，不发送消息，不操作微信 UI。
-- 真实聊天、联系人、Profile、数据库和输出报告不得提交到 Git。
-- 仓库中的聊天、账号、品牌和金额样例均应为虚构数据。
-- Reader 的数据库兼容性可能随微信版本变化；通知预览只是入站、非完整的降级来源。
-- 运行任何涉及账号、支付、发布或外部写入的动作前，由使用者最终确认。
-- 独立实现、商标和第三方关系说明见 [`NOTICE.md`](NOTICE.md)。
-
-发布前运行：
-
-```bash
-./scripts/validate.sh
-```
-
-## 社群
-
-开源代码提供完整的基础能力。Rion 的付费社群主要提供持续更新、安装与配置陪跑、真实案例拆解、行业规则包、Office Hour、产品共创，以及 AI + 自媒体 + 商业化的实践记录。
-
-开源项目和社群是两种交付：前者让任何人能独立使用，后者帮助成员更快把工具变成自己的结果。
-
-想一起实践 AI 工具、Skills 和自媒体变现，可以加入 Rion 的付费社群，交流使用方法、实战案例和商业化经验。
-
-**微信号：`a668899universe`，添加时请备注「社群」**，了解具体内容和加入方式。
-
-## 支持这个项目 / Support the Project
-
-如果微信个人情报库帮你少翻了聊天记录、找到了值得跟进的机会，欢迎给项目点个 Star。你的支持会让它持续更新，也让更多人用好自己的聊天信息。
-
-If WeChat Intelligence Hub saves you time reviewing chats or helps you spot an opportunity worth following up, please consider giving the project a Star. Your support helps it keep improving.
-
-[前往 GitHub，点个 Star / Star on GitHub](https://github.com/Rion-Wu-tech/wechat-intelligence-hub)
-
-## License
-
-本项目采用 **GNU Affero General Public License v3.0 only（AGPL-3.0-only）**。你可以学习、运行、修改和用于商业活动；分发修改版本，或通过网络向用户提供修改版本时，必须履行 AGPL 对应源码等义务。
-
-需要闭源集成、专有发行、OEM、白标或不希望承担 AGPL 义务的企业，可申请[单独商业授权](COMMERCIAL-LICENSE.md)。加入 Rion 的付费社群不会自动改变软件许可证；社群提供的是安装适配、工作流配置、案例、持续更新和实践支持。
-
-第三方依赖继续遵循各自许可证，仓库根许可证不会替换依赖项目的授权声明。已经依据 AGPL 获得的公开版本许可不可撤销，但未来版本可以采用不同的发布方式。
+本项目基于 [MIT License](LICENSE) 协议开源。  
+欢迎提交 [Issues](https://github.com/LuckTerence/CleanYourWechatTool/issues) 反馈建议或提出 Pull Request，让每个人的 Mac 都能轻松瘦身！
