@@ -357,6 +357,62 @@ class TestWeChatSlim(unittest.TestCase):
         finally:
             shutil.rmtree(test_dir, ignore_errors=True)
 
+    def test_cli_stats_and_state_tracking(self):
+        """测试 stats 命令与运行时状态追踪/记录."""
+        import subprocess
+
+        test_dir = Path(tempfile.mkdtemp())
+        state_file = test_dir / 'state.json'
+        archive_dir = test_dir / 'archive'
+        script_path = str(Path(__file__).resolve().parents[3] / 'wechat_slim.py')
+
+        try:
+            # 1. 初始执行 stats 命令
+            res_stats_init = subprocess.run(
+                [sys.executable, script_path, 'stats', '--state-path', str(state_file)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_stats_init.returncode, 0)
+            self.assertIn('历史累计瘦身统计与审计大盘', res_stats_init.stdout)
+            self.assertIn('累计运行次数 : 0 次', res_stats_init.stdout)
+
+            # 2. 准备测试数据并运行 clean
+            msg_dir = test_dir / 'msg/video'
+            msg_dir.mkdir(parents=True)
+            v = msg_dir / 'sample.mp4'
+            v.write_bytes(b'A' * 10240) # 10KB
+
+            res_clean = subprocess.run(
+                [
+                    sys.executable, script_path, 'clean',
+                    '--path', str(test_dir),
+                    '--types', 'video',
+                    '--days', '0',
+                    '--archive-to', str(archive_dir),
+                    '-f',
+                    '--state-path', str(state_file),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_clean.returncode, 0)
+
+            # 3. 再次执行 stats 命令，验证累计数据与历史操作展示
+            res_stats_after = subprocess.run(
+                [sys.executable, script_path, 'stats', '--state-path', str(state_file)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_stats_after.returncode, 0)
+            self.assertIn('累计运行次数 : 1 次', res_stats_after.stdout)
+            self.assertIn('累计瘦身清理 : 1 次', res_stats_after.stdout)
+            self.assertIn('10.0 KB', res_stats_after.stdout)
+            self.assertIn('外置归档', res_stats_after.stdout)
+
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
 
 if __name__ == '__main__':
     unittest.main()

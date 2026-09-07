@@ -24,16 +24,71 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple, Set, Union
 import urllib.parse
 import webbrowser
+import logging
 
-# 引入核心人脉白名单管理器 (Phase 2 核心杀手锏)
+# 引入核心人脉白名单与状态记录管理器
 try:
     from wechat_intelligence_hub.engine.whitelist import WhiteListManager, WhiteListRule
+    from wechat_intelligence_hub.engine.state import StateManager, SlimHistoryRecord
 except ImportError:
     try:
         from engine.whitelist import WhiteListManager, WhiteListRule
+        from engine.state import StateManager, SlimHistoryRecord
     except ImportError:
         sys.path.insert(0, str(Path(__file__).resolve().parent / 'projects' / 'wechat-intelligence-hub'))
         from engine.whitelist import WhiteListManager, WhiteListRule
+        from engine.state import StateManager, SlimHistoryRecord
+
+
+class Colors:
+    """零依赖 ANSI 彩色终端输出."""
+    USE_COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    RESET = "\033[0m" if USE_COLOR else ""
+    BOLD = "\033[1m" if USE_COLOR else ""
+    GREEN = "\033[32m" if USE_COLOR else ""
+    BLUE = "\033[34m" if USE_COLOR else ""
+    YELLOW = "\033[33m" if USE_COLOR else ""
+    RED = "\033[31m" if USE_COLOR else ""
+    CYAN = "\033[36m" if USE_COLOR else ""
+    GRAY = "\033[90m" if USE_COLOR else ""
+    MAGENTA = "\033[35m" if USE_COLOR else ""
+
+
+def setup_logger(log_file: Optional[Path] = None) -> logging.Logger:
+    """初始化审计日志系统，记录到 ~/.wechat_slim/audit.log."""
+    logger = logging.getLogger("wechat_slim")
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        if not log_file:
+            log_dir = Path.home() / ".wechat_slim"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "audit.log"
+        try:
+            fh = logging.FileHandler(log_file, encoding="utf-8")
+            fh.setLevel(logging.INFO)
+            formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+            fh.setFormatter(formatter)
+            logger.addHandler(fh)
+        except Exception:
+            pass
+    return logger
+
+
+_audit_logger = setup_logger()
+
+
+def render_progress(current: int, total: int, prefix: str = "", bar_len: int = 25) -> None:
+    """平滑终端字符动态进度条."""
+    if not sys.stdout.isatty() or total <= 0:
+        return
+    pct = min(1.0, current / total)
+    filled = int(bar_len * pct)
+    bar = "█" * filled + "░" * (bar_len - filled)
+    sys.stdout.write(f"\r  {prefix} [{bar}] {pct*100:5.1f}% ({current:,}/{total:,})")
+    sys.stdout.flush()
+    if current >= total:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
 
 def format_bytes(size: float) -> str:
@@ -284,12 +339,19 @@ def execute_slimming(
         if not dry_run:
             archive_to.mkdir(parents=True, exist_ok=True)
 
+    total_target_files = sum(len(c.files) for k, c in categories.items() if k in selected_types and not c.is_protected)
+    cur_idx = 0
+
     for type_key in selected_types:
         cat = categories.get(type_key)
         if not cat or cat.is_protected:
             continue
 
         for fp, size, mtime in cat.files:
+            cur_idx += 1
+            if not dry_run and total_target_files > 50 and cur_idx % 20 == 0:
+                render_progress(cur_idx, total_target_files, prefix="正在瘦身处理")
+
             # 绝对安全护栏 1：绝不处理数据库文件
             if fp.suffix in ['.db', '.db-wal', '.db-shm', '.sqlite', '.wcdb'] or 'db_storage' in fp.parts:
                 continue
@@ -329,6 +391,9 @@ def execute_slimming(
             else:
                 # 默认安全清理：移至 macOS 废纸篓
                 move_to_trash(fp)
+
+    if not dry_run and total_target_files > 50:
+        render_progress(total_target_files, total_target_files, prefix="正在瘦身处理")
 
     return SlimResult(freed_count, freed_bytes, protected_count, protected_bytes)
 
@@ -470,6 +535,7 @@ def execute_dedup(
     """
     processed_count = 0
     freed_bytes = 0
+    total_copies = sum(len(grp.files) - 1 for grp in groups if grp.wasted_count > 0 and len(grp.files) >= 2)
 
     for grp in groups:
         if grp.wasted_count == 0 or len(grp.files) < 2:
@@ -492,6 +558,9 @@ def execute_dedup(
             processed_count += 1
             freed_bytes += grp.file_size
 
+            if not dry_run and total_copies > 10 and processed_count % 5 == 0:
+                render_progress(processed_count, total_copies, prefix="正在去重处理")
+
             if dry_run:
                 continue
 
@@ -505,6 +574,9 @@ def execute_dedup(
                     continue
             elif action == 'trash':
                 move_to_trash(dup)
+
+    if not dry_run and total_copies > 10:
+        render_progress(total_copies, total_copies, prefix="正在去重处理")
 
     return processed_count, freed_bytes
 
@@ -570,9 +642,15 @@ def cmd_dedup(args: argparse.Namespace) -> None:
 
     print('\n正在执行去重处理...')
     done_count, done_bytes = execute_dedup(actionable_groups, action=args.action, dry_run=False)
-    print(f'[✓] 去重成功！已处理 {done_count:,} 个重复副本，成功释放 {format_bytes(done_bytes)} 物理磁盘空间！')
+    state_mgr = StateManager(getattr(args, 'state_path', None))
+    state_mgr.record_dedup(done_count, done_bytes, action=args.action)
+    _audit_logger.info(
+        f"cmd_dedup completed: action={args.action}, processed={done_count}, freed_bytes={done_bytes}"
+    )
+    print(f'{Colors.GREEN}[✓]{Colors.RESET} 去重成功！已处理 {done_count:,} 个重复副本，成功释放 {Colors.BOLD}{Colors.GREEN}{format_bytes(done_bytes)}{Colors.RESET} 物理磁盘空间！')
     if args.action == 'hardlink':
         print('    提示: 已转换为 APFS 硬链接，微信中所有聊天窗口里的文件依然可原样点击打开！')
+    prompt_nps_if_needed(state_mgr)
 
 
 def cmd_tag(args: argparse.Namespace) -> None:
@@ -589,7 +667,8 @@ def cmd_tag(args: argparse.Namespace) -> None:
         keywords = [k.strip() for k in args.keywords.split(',')] if getattr(args, 'keywords', None) else []
         retain_days = getattr(args, 'retain_days', 0) or 0
         rule = wl_mgr.add(name, wxid, protect=protect, keywords=keywords, retain_days=retain_days)
-        print(f"[✓] 成功添加白名单保护规则: {rule.name} (ID: {rule.wxid})")
+        _audit_logger.info(f"cmd_tag: added rule '{rule.name}' (wxid: {rule.wxid})")
+        print(f"{Colors.GREEN}[✓]{Colors.RESET} 成功添加白名单保护规则: {rule.name} (ID: {rule.wxid})")
         print(f"    保护级别: {'绝对保护 (永不删除)' if rule.protect == 'absolute' else f'保留 {rule.retain_days} 天内文件'}")
         if rule.keywords:
             print(f"    包含关键词: {', '.join(rule.keywords)}")
@@ -598,20 +677,22 @@ def cmd_tag(args: argparse.Namespace) -> None:
     if getattr(args, 'remove', None):
         ok = wl_mgr.remove(args.remove)
         if ok:
-            print(f"[✓] 成功移除白名单保护规则: {args.remove}")
+            _audit_logger.info(f"cmd_tag: removed rule '{args.remove}'")
+            print(f"{Colors.GREEN}[✓]{Colors.RESET} 成功移除白名单保护规则: {args.remove}")
         else:
             print(f"[-] 未找到匹配的白名单规则: {args.remove}")
         return
 
     if getattr(args, 'clear', False):
         wl_mgr.clear()
-        print("[✓] 已清空白名单所有保护规则。")
+        _audit_logger.info("cmd_tag: cleared all whitelist rules")
+        print(f"{Colors.GREEN}[✓]{Colors.RESET} 已清空白名单所有保护规则。")
         return
 
     # 默认展示所有规则列表
     rules = wl_mgr.list_rules()
     print("=" * 66)
-    print("       WeChat Slim - 核心人脉与重要会话防删白名单")
+    print(f"{Colors.BOLD}{Colors.MAGENTA}       WeChat Slim - 核心人脉与重要会话防删白名单{Colors.RESET}")
     print("=" * 66)
     if not rules:
         print("  当前暂无白名单规则。")
@@ -644,8 +725,12 @@ def cmd_scan(args: argparse.Namespace) -> None:
     wl_mgr = WhiteListManager(getattr(args, 'whitelist_config', None))
     active_rules = wl_mgr.list_rules()
 
+    state_mgr = StateManager(getattr(args, 'state_path', None))
+    state_mgr.record_scan()
+    _audit_logger.info(f"cmd_scan completed: scanned {len(accounts)} accounts")
+
     print('=' * 66)
-    print('       WeChat Slim - 微信智能存储透视器')
+    print(f'{Colors.BOLD}{Colors.GREEN}       WeChat Slim - 微信智能存储透视器{Colors.RESET}')
     print('=' * 66)
 
     for idx, acc in enumerate(accounts, 1):
@@ -743,15 +828,105 @@ def cmd_clean(args: argparse.Namespace) -> None:
         act_res = execute_slimming(
             acc, categories, args.days, min_size_bytes, types, dry_run=False, archive_to=archive_dir, whitelist_mgr=wl_mgr
         )
-        print(f'[✓] 处理完成！成功释放 {format_bytes(act_res.freed_bytes)} 空间（处理了 {act_res.freed_count:,} 个文件）。')
+        state_mgr = StateManager(getattr(args, 'state_path', None))
+        state_mgr.record_clean(
+            freed_count=act_res.freed_count,
+            freed_bytes=act_res.freed_bytes,
+            protected_count=act_res.protected_count,
+            protected_bytes=act_res.protected_bytes,
+            is_archive=bool(archive_dir),
+        )
+        _audit_logger.info(
+            f"cmd_clean completed: freed_count={act_res.freed_count}, freed_bytes={act_res.freed_bytes}, "
+            f"protected_count={act_res.protected_count}, protected_bytes={act_res.protected_bytes}, "
+            f"is_archive={bool(archive_dir)}"
+        )
+        print(f'{Colors.GREEN}[✓]{Colors.RESET} 处理完成！成功释放 {Colors.BOLD}{Colors.GREEN}{format_bytes(act_res.freed_bytes)}{Colors.RESET} 空间（处理了 {act_res.freed_count:,} 个文件）。')
         if act_res.protected_count > 0:
             print(f'    🛡️ 白名单防删: 严格保护了 {act_res.protected_count:,} 个核心联系人文件未被触碰。')
         if not archive_dir:
             print('    提示: 文件已被安全放入废纸篓。如需彻底释放磁盘空间，请清空废纸篓。')
         else:
             print(f'    提示: 所有文件已完整保存至外置目录: {archive_dir}')
+        prompt_nps_if_needed(state_mgr)
     else:
         print('\n[演练完成] 实际执行时请去掉 --dry-run 参数。')
+
+
+def prompt_nps_if_needed(state_mgr: StateManager) -> None:
+    """如果满足 NPS 触发条件且终端处于交互状态，向用户展示满意度打分调查."""
+    if not state_mgr.should_trigger_nps():
+        return
+    if not sys.stdin.isatty():
+        return
+
+    print("\n" + "=" * 66)
+    print(f"{Colors.BOLD}{Colors.YELLOW}🌟 感谢您使用 WeChat Slim 微信智能存储管理工具！{Colors.RESET}")
+    print(f"您已累计释放了 {Colors.GREEN}{format_bytes(state_mgr.total_freed_bytes)}{Colors.RESET} 物理磁盘空间。")
+    print("为了帮助我们持续改进，您愿意向身边的朋友推荐 WeChat Slim 吗？")
+    print("打分范围: 0分 (绝不推荐) ～ 10分 (非常推荐)")
+    print("=" * 66)
+    try:
+        ans = input("请输入您的评分 [0-10, 直接回车跳过]: ").strip()
+        if ans.isdigit():
+            score = int(ans)
+            if 0 <= score <= 10:
+                state_mgr.record_nps(score)
+                _audit_logger.info(f"NPS 调查打分记录: {score} 分")
+                print(f"{Colors.GREEN}[✓] 感谢您的珍贵反馈 ({score} 分)！我们将持续为您优化体验。{Colors.RESET}")
+                return
+        state_mgr.mark_nps_prompted()
+        print("[✓] 已跳过评分，感谢支持！")
+    except (KeyboardInterrupt, EOFError):
+        state_mgr.mark_nps_prompted()
+        print()
+
+
+def cmd_stats(args: argparse.Namespace) -> None:
+    """查看历史累计瘦身统计与操作记录."""
+    state_path = getattr(args, 'state_path', None)
+    state_mgr = StateManager(state_path)
+
+    print("=" * 66)
+    print(f"{Colors.BOLD}{Colors.BLUE}       WeChat Slim - 历史累计瘦身统计与审计大盘{Colors.RESET}")
+    print("=" * 66)
+    print(f"  • 状态存储路径 : {state_mgr.state_path}")
+    log_dir = Path.home() / ".wechat_slim"
+    audit_log = log_dir / "audit.log"
+    print(f"  • 审计日志路径 : {audit_log}")
+    print("-" * 66)
+    print(f"  • 累计运行次数 : {Colors.BOLD}{state_mgr.total_runs}{Colors.RESET} 次")
+    print(f"  • 累计空间扫描 : {state_mgr.total_scans} 次")
+    print(f"  • 累计瘦身清理 : {state_mgr.total_cleans} 次")
+    print(f"  • 累计查重去重 : {state_mgr.total_dedups} 次")
+    print(f"  • 累计释放空间 : {Colors.BOLD}{Colors.GREEN}{format_bytes(state_mgr.total_freed_bytes)}{Colors.RESET}")
+    print(f"  • 累计保护文件 : {Colors.CYAN}{format_bytes(state_mgr.total_protected_bytes)}{Colors.RESET} (白名单核心防删)")
+    nps_str = f"{state_mgr.nps_score} / 10 分" if state_mgr.nps_score is not None else "尚未打分 (使用 10 次后自动开启反馈)"
+    print(f"  • NPS 满意度   : {Colors.YELLOW}{nps_str}{Colors.RESET}")
+    print("-" * 66)
+
+    if not state_mgr.history:
+        print("  当前尚无详细历史操作记录。")
+    else:
+        print("  [最近 5 次操作记录]:")
+        recent = state_mgr.history[-5:]
+        for idx, rec in enumerate(reversed(recent), 1):
+            ts = rec.timestamp[:19].replace("T", " ")
+            action_map = {
+                "clean": "清理瘦身",
+                "archive": "外置归档",
+                "dedup_hardlink": "APFS硬链接去重",
+                "dedup_trash": "废纸篓去重",
+                "scan": "存储扫描",
+            }
+            act_name = action_map.get(rec.action, rec.action)
+            print(f"  {idx}. [{ts}] {act_name}")
+            print(f"     影响文件: {rec.count:,} 个 | 释放空间: {format_bytes(rec.freed_bytes)}")
+            if rec.protected_bytes > 0:
+                print(f"     白名单保护: {format_bytes(rec.protected_bytes)}")
+            if rec.note:
+                print(f"     备注: {rec.note}")
+    print("=" * 66)
 
 WEB_UI_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1220,10 +1395,10 @@ def interactive_wizard() -> None:
     cleanable_size = sum(c.total_bytes for k, c in categories.items() if not c.is_protected)
 
     print('=' * 66)
-    print('       WeChat Slim - 微信智能瘦身与无损归档工具 (Mac版)')
+    print(f'{Colors.BOLD}{Colors.GREEN}       WeChat Slim - 微信智能瘦身与无损归档工具 (Mac版){Colors.RESET}')
     print('=' * 66)
-    print(f'[✓] 自动定位账号: {acc.account_id} ({acc.version_type})')
-    print(f'    总占用: {format_bytes(total_size)} | 瘦身潜力: {format_bytes(cleanable_size)}')
+    print(f'{Colors.GREEN}[✓]{Colors.RESET} 自动定位账号: {Colors.BOLD}{acc.account_id}{Colors.RESET} ({acc.version_type})')
+    print(f'    总占用: {format_bytes(total_size)} | 瘦身潜力: {Colors.BOLD}{Colors.GREEN}{format_bytes(cleanable_size)}{Colors.RESET}')
     print('-' * 66)
 
     print('\n请选择要执行的操作:')
@@ -1234,9 +1409,10 @@ def interactive_wizard() -> None:
     print('  [5] 智能查重去重 (多群重复转发秒级查重，转换为 APFS 硬链接释放空间)')
     print('  [6] 启动网页大盘 (启动本地现代化 WebUI 并在浏览器中查看)')
     print('  [7] 核心人脉白名单管理 (查看或添加家人、老板、重要客户防删名单)')
+    print('  [8] 历史使用统计与审计 (查看累计释放空间与操作记录)')
     print('  [q] 退出')
 
-    choice = input('\n请输入选项 [1-7/q]: ').strip().lower()
+    choice = input('\n请输入选项 [1-8/q]: ').strip().lower()
     if choice == '1':
         args = argparse.Namespace(
             types='video,file',
@@ -1283,6 +1459,8 @@ def interactive_wizard() -> None:
         cmd_web(argparse.Namespace(port=8080, path=None, no_browser=False))
     elif choice == '7':
         cmd_tag(argparse.Namespace(add=None, remove=None, clear=False, list=True))
+    elif choice == '8':
+        cmd_stats(argparse.Namespace(state_path=None))
     else:
         print('已退出。')
 
@@ -1297,6 +1475,7 @@ def main() -> None:
     scan_p = subparsers.add_parser('scan', help='扫描并展示微信存储空间深度分布')
     scan_p.add_argument('--path', default=None, help='指定自定义微信存储目录 (默认: 自动发现系统微信目录)')
     scan_p.add_argument('--whitelist-config', default=None, help=argparse.SUPPRESS)
+    scan_p.add_argument('--state-path', default=None, help=argparse.SUPPRESS)
 
     clean_p = subparsers.add_parser('clean', help='执行文件瘦身或外置归档')
     clean_p.add_argument('--path', default=None, help='指定自定义微信存储目录 (默认: 自动发现系统微信目录)')
@@ -1307,6 +1486,7 @@ def main() -> None:
     clean_p.add_argument('--archive-to', default=None, help='指定外置移动硬盘或备份目录 (将文件安全移动至该目录，而非废纸篓)')
     clean_p.add_argument('-f', '--force', action='store_true', help='跳过确认提示直接执行')
     clean_p.add_argument('--whitelist-config', default=None, help=argparse.SUPPRESS)
+    clean_p.add_argument('--state-path', default=None, help=argparse.SUPPRESS)
 
     dedup_p = subparsers.add_parser('dedup', help='多群转发重复文件智能查重与去重 (Phase 2)')
     dedup_p.add_argument('--path', default=None, help='指定自定义微信存储目录 (默认: 自动发现系统微信目录)')
@@ -1315,6 +1495,7 @@ def main() -> None:
     dedup_p.add_argument('--action', choices=['hardlink', 'trash'], default='hardlink', help='去重动作: hardlink (转为硬链接，零风险) 或 trash (移入废纸篓)')
     dedup_p.add_argument('--dry-run', action='store_true', help='模拟预演，只分析展示不实际修改')
     dedup_p.add_argument('-f', '--force', action='store_true', help='跳过确认提示直接执行')
+    dedup_p.add_argument('--state-path', default=None, help=argparse.SUPPRESS)
 
     web_p = subparsers.add_parser('web', help='启动本地可视化大盘 (WebUI Dashboard)')
     web_p.add_argument('--port', type=int, default=8080, help='指定本地网页端口 (默认: 8080)')
@@ -1332,6 +1513,9 @@ def main() -> None:
     tag_p.add_argument('--clear', action='store_true', help='清空所有白名单规则')
     tag_p.add_argument('--whitelist-config', default=None, help=argparse.SUPPRESS)
 
+    stats_p = subparsers.add_parser('stats', help='查看历史累计瘦身统计与操作记录')
+    stats_p.add_argument('--state-path', default=None, help=argparse.SUPPRESS)
+
     args = parser.parse_args()
 
     if args.subcommand == 'scan':
@@ -1344,6 +1528,8 @@ def main() -> None:
         cmd_web(args)
     elif args.subcommand == 'tag':
         cmd_tag(args)
+    elif args.subcommand == 'stats':
+        cmd_stats(args)
     else:
         interactive_wizard()
 
